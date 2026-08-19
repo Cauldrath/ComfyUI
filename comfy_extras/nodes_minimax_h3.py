@@ -78,12 +78,18 @@ def _encode_ref_audio(audio_vae, audio):
     return z, z.shape[-1]
 
 
-def _empty_av_latent(width, height, length, batch_size=1):
+def _empty_av_latent(width, height, length, batch_size=1, vid2vid=None, aud2aud=None):
     frame_count, latent_t, audio_t = temporal_shape(length)
-    video = torch.zeros([batch_size, 24, latent_t, height // 16, width // 16],
-                        device=comfy.model_management.intermediate_device())
-    audio = torch.zeros([batch_size, 32, 2, audio_t],
-                        device=comfy.model_management.intermediate_device())
+    if vid2vid:
+        video = vid2vid["samples"].repeat(batch_size, 1, 1, 1, 1).to(device=comfy.model_management.intermediate_device())
+    else:
+        video = torch.zeros([batch_size, 24, latent_t, height // 16, width // 16],
+                            device=comfy.model_management.intermediate_device())
+    if aud2aud:
+        audio = aud2aud["samples"].repeat(batch_size, 1, 1, 1).to(device=comfy.model_management.intermediate_device())
+    else:
+        audio = torch.zeros([batch_size, 32, 2, audio_t],
+                            device=comfy.model_management.intermediate_device())
     return {"samples": comfy.nested_tensor.NestedTensor((video, audio))}, frame_count
 
 
@@ -125,6 +131,8 @@ class MiniMaxH3ImageToVideo(io.ComfyNode):
                 io.Int.Input("width", default=1344, min=32, max=nodes.MAX_RESOLUTION, step=32),
                 io.Int.Input("height", default=768, min=32, max=nodes.MAX_RESOLUTION, step=32),
                 io.Int.Input("length", default=124, min=5, max=3600, step=17, tooltip="Frame count at 24 fps, snapped up to the model's 17k+5 grid (124 = ~5s; trained range is ~124-362, longer is untested)"),
+                io.Latent.Input("vid2vid", optional=True),
+                io.Latent.Input("aud2aud", optional=True),
                 io.Image.Input("first_frame", optional=True),
                 io.Image.Input("last_frame", optional=True),
             ],
@@ -132,9 +140,9 @@ class MiniMaxH3ImageToVideo(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, clip, vae, prompt, width, height, length,
+    def execute(cls, clip, vae, prompt, width, height, length, vid2vid = None, aud2aud = None,
                 first_frame=None, last_frame=None) -> io.NodeOutput:
-        latent, frame_count = _empty_av_latent(width, height, length)
+        latent, frame_count = _empty_av_latent(width, height, length, 1, vid2vid, aud2aud)
 
         images = []
         keyframes = []
@@ -260,6 +268,8 @@ class MiniMaxH3ReferenceToVideo(io.ComfyNode):
                 io.Int.Input("width", default=1344, min=32, max=nodes.MAX_RESOLUTION, step=32),
                 io.Int.Input("height", default=768, min=32, max=nodes.MAX_RESOLUTION, step=32),
                 io.Int.Input("length", default=124, min=5, max=3600, step=17, tooltip="Frame count at 24 fps, (124 = ~5s, trained range is ~124-362)"),
+                io.Latent.Input("vid2vid", optional=True),
+                io.Latent.Input("aud2aud", optional=True),
                 io.Combo.Input("ref_image_size", options=["match", "max"], default="match",
                     tooltip="Reference image sizing. 'match' scales each ref (down only, keeping aspect) to the generation's pixel area; 'max' uses the reference pipeline's 2048px short edge for best identity fidelity. Reference tokens ride through every sampling step, so 'max' can be several times slower."),
                 io.Autogrow.Input("ref_images", optional=True,
@@ -283,9 +293,9 @@ class MiniMaxH3ReferenceToVideo(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, clip, vae, audio_vae, prompt, width, height, length, ref_image_size="match",
+    def execute(cls, clip, vae, audio_vae, prompt, width, height, length, vid2vid = None, aud2aud = None, ref_image_size="match",
                 ref_images=None, ref_videos=None, ref_video_audios=None, ref_audios=None) -> io.NodeOutput:
-        latent, frame_count = _empty_av_latent(width, height, length)
+        latent, frame_count = _empty_av_latent(width, height, length, 1, vid2vid, aud2aud)
 
         ref_items = []   # for the tokenizer presentation, in request order
         ref_blocks = []  # for the DiT payload, same order
